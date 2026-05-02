@@ -1,0 +1,166 @@
+# ==============================================================
+# terraform.tfvars.example
+#
+# HOW TO USE:
+#   cp terraform.tfvars.example terraform.tfvars
+#   Edit terraform.tfvars with your values.
+#   Never commit terraform.tfvars to source control — it contains secrets.
+#   Add terraform.tfvars to your .gitignore.
+#
+# DEPLOYING TO A DIFFERENT REGION:
+#   1. Change aws_region   (e.g. "us-gov-east-1" or "us-east-1")
+#   2. Change az_1 / az_2  to match that region's AZ names
+#   3. Change aws_partition if moving between GovCloud ↔ commercial
+#   4. Re-run the AMI lookup command to get the wiz_stig_ami_id for the new region
+#   5. Run: terraform plan && terraform apply
+# ==============================================================
+
+
+# ==============================================================
+# SECTION 1 — AWS Provider & Region
+# ==============================================================
+
+# Target AWS region for all resources.
+# GovCloud:   us-gov-west-1 | us-gov-east-1
+# Commercial: us-east-1 | us-east-2 | us-west-2 | eu-west-1 | etc.
+aws_region = "us-gov-west-1"
+
+# AWS partition — drives ALL arn:PARTITION: strings in IAM and KMS policies.
+# GovCloud  : "aws-us-gov"
+# Commercial: "aws"
+# China     : "aws-cn"
+aws_partition = "aws-us-gov"
+
+# Availability Zones — must exist in aws_region above.
+# us-gov-west-1  → "us-gov-west-1a" / "us-gov-west-1b"
+# us-gov-east-1  → "us-gov-east-1a" / "us-gov-east-1b"
+# us-east-1      → "us-east-1a"     / "us-east-1b"
+az_1 = "us-gov-west-1a"
+az_2 = "us-gov-west-1b"
+
+# 12-digit account ID of the Wiz Outpost account (the one you are deploying into).
+# Used in SCP ARN construction.
+wiz_outpost_account_id = "REPLACE_WITH_THIS_ACCOUNT_ID"
+
+
+# ==============================================================
+# SECTION 2 — Naming & Tagging
+# ==============================================================
+
+# Prefix applied to every resource name. Lowercase + hyphens only.
+# Change to differentiate environments (e.g. "wiz-outpost-prod" / "wiz-outpost-dev")
+environment_name = "wiz-outpost"
+
+# Tags applied to every resource (merged with resource-specific tags).
+# Add or remove tags as required by your organisation's tagging standard.
+tags_common = {
+  ManagedBy   = "Terraform"
+  Purpose     = "WizOutpost"
+  Compliance  = "FedRAMP-High"
+  Owner       = "REPLACE_WITH_TEAM_OR_ORG"
+  CostCenter  = "REPLACE_WITH_COST_CENTER"
+}
+
+
+# ==============================================================
+# SECTION 3 — VPC & Networking CIDRs
+# ==============================================================
+
+# Main VPC CIDR — change if 10.0.0.0/16 overlaps your network.
+vpc_cidr = "10.0.0.0/16"
+
+# Private subnets — EKS worker nodes live here (no public IPs).
+private_subnet_1_cidr = "10.0.1.0/24"
+private_subnet_2_cidr = "10.0.2.0/24"
+
+# Public subnets — NAT Gateways only, no worker nodes.
+public_subnet_1_cidr = "10.0.100.0/24"
+public_subnet_2_cidr = "10.0.101.0/24"
+
+
+# ==============================================================
+# SECTION 4 — Wiz Tenant Credentials  *** KEEP SECRET ***
+# Obtain both values from gov.wiz.io → Settings → Connectors
+# ==============================================================
+
+# 12-digit AWS account ID of the Wiz GovCloud control plane.
+# This is Wiz's account, NOT yours. Provided by your Wiz federal team.
+wiz_gov_tenant_account_id = "REPLACE_WITH_WIZ_TENANT_ACCOUNT_ID"
+
+# Wiz-generated External ID for your tenant. Treat as a secret.
+# Best practice: set via environment variable instead of writing here:
+#   export TF_VAR_wiz_external_id="your-external-id"
+wiz_external_id = "REPLACE_WITH_WIZ_EXTERNAL_ID"
+
+
+# ==============================================================
+# SECTION 5 — EKS Cluster
+# ==============================================================
+
+# Kubernetes version. Check AWS docs for supported versions in GovCloud.
+kubernetes_version = "1.30"
+
+# EKS control plane CloudWatch log retention (days).
+# FedRAMP AU-11 minimum = 365. Do not lower below 365 in production.
+eks_log_retention_days = 365
+
+
+# ==============================================================
+# SECTION 6 — KMS Key
+# ==============================================================
+
+# Days before KMS key is permanently deleted after a delete request.
+# Range: 7–30. Use 30 in production for maximum recovery window.
+kms_deletion_window_days = 30
+
+
+# ==============================================================
+# SECTION 7 — EC2 Node Pool
+# ==============================================================
+
+# AMI ID of the Wiz STIG-hardened image from AWS Marketplace.
+# THIS IS REGION-SPECIFIC — re-run the lookup command if you change aws_region.
+#
+# Lookup command:
+#   aws ec2 describe-images \
+#     --owners aws-marketplace \
+#     --filters "Name=name,Values=*wiz*stig*" "Name=state,Values=available" \
+#     --region <YOUR_REGION> \
+#     --query 'sort_by(Images,&CreationDate)[-1].ImageId' \
+#     --output text
+wiz_stig_ami_id = "REPLACE_WITH_AMI_ID"
+
+# EC2 instance type for scanning nodes.
+# m5.2xlarge = 8 vCPU / 32 GB — minimum recommended.
+# m5.4xlarge = 16 vCPU / 64 GB — for high-volume environments.
+node_instance_type = "m5.2xlarge"
+
+# Root EBS volume size in GB per node. Minimum 50, recommended 100.
+node_volume_size_gb = 100
+
+# Auto Scaling Group sizing.
+node_group_min_size     = 2    # Keep ≥2 for HA across two AZs
+node_group_max_size     = 10   # Cost ceiling
+node_group_desired_size = 2    # Starting count
+
+# Seconds before ASG starts health checks after node launch.
+# 300 (5 min) is sufficient for the Wiz STIG AMI bootstrap.
+node_health_check_grace_period = 300
+
+# EC2 IMDS hop limit. Keep at 1 (FedRAMP compliant).
+# 1 = only the host OS can access instance metadata.
+imds_hop_limit = 1
+
+
+# ==============================================================
+# SECTION 8 — CloudTrail & Audit Log Retention
+# ==============================================================
+
+# CloudWatch log retention for CloudTrail events.
+# FedRAMP AU-11 minimum = 365 days.
+cloudtrail_log_retention_days = 365
+
+# S3 lifecycle: transition to cheaper storage tiers.
+cloudtrail_s3_transition_ia_days      = 90    # Move to STANDARD_IA after 90 days
+cloudtrail_s3_transition_glacier_days = 365   # Move to GLACIER after 1 year
+cloudtrail_s3_expiration_days         = 1095  # Delete after 3 years (FedRAMP AU-11 minimum)
